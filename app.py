@@ -103,4 +103,4 @@ async def handle_link(client, message: Message):
         await status_msg.edit_text(f"❌ **Error:**\n`{str(e)}` \n\n_Tip: Try again in a few minutes._")
 
 if __name__ == "__main__":
-    app.run()
+    app.run() 
