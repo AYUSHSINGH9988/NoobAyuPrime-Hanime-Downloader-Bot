@@ -1,3 +1,4 @@
+
 import os
 import time
 import asyncio
@@ -5,38 +6,35 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import yt_dlp
 
-# --- CONFIGURATION ---
-# Replace these with your actual credentials from my.telegram.org
-API_ID = "YOUR_API_ID" 
-API_HASH = "YOUR_API_HASH"
-BOT_TOKEN = "8354139629:AAFXeLAl1kui4rdlMtKJkONHYlFttBDfh6w"
+# Configuration from Environment Variables
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8354139629:AAFXeLAl1kui4rdlMtKJkONHYlFttBDfh6w")
 
 app = Client("hanime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- PROGRESS BAR LOGIC ---
 async def progress_bar(current, total, message, ud_type):
     now = time.time()
-    # Update every 3 seconds to avoid Telegram flood limits
     if not hasattr(progress_bar, "last_update"):
         progress_bar.last_update = 0
     
-    if now - progress_bar.last_update > 3:
+    if now - progress_bar.last_update > 4:
         percentage = current * 100 / total
         elapsed_time = now - progress_bar.start_time
         speed = current / elapsed_time if elapsed_time > 0 else 0
         
-        progress_str = f"**{ud_type}**\n"
-        progress_str += f"📊 **Progress:** {percentage:.2f}%\n"
-        progress_str += f"🚀 **Speed:** {speed/1024:.2f} KB/s\n"
-        progress_str += f"📁 **Done:** {current/(1024*1024):.2f} MB / {total/(1024*1024):.2f} MB"
-        
+        progress_str = (
+            f"⚡️ **{ud_type}**\n"
+            f"📊 **Progress:** {percentage:.2f}%\n"
+            f"🚀 **Speed:** {speed/1024:.2f} KB/s\n"
+            f"📁 **Size:** {current/(1024*1024):.2f} MB / {total/(1024*1024):.2f} MB"
+        )
         try:
             await message.edit_text(progress_str)
         except:
             pass
         progress_bar.last_update = now
 
-# --- DOWNLOAD LOGIC ---
 def download_video(url):
     ydl_opts = {
         'format': 'best',
@@ -51,55 +49,46 @@ def download_video(url):
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info)
 
-# --- BOT COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    welcome_text = (
-        "👋 **Hello there!**\n\n"
-        "I am your **Hanime Downloader Bot**. 🤖\n"
-        "Just send me a valid link, and I will download & upload it for you! 📥✨\n\n"
-        "🚀 **Fast & Simple!** Give it a try."
-    )
-    await message.reply_text(welcome_text)
+    await message.reply_text("👋 **Hello!**\nSend me a Hanime link to download the video. 🤖🚀")
 
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def handle_link(client, message: Message):
     url = message.text
     if "hanime.tv" not in url:
-        await message.reply_text("❌ **Invalid Link!** Please send a proper Hanime.tv URL.")
+        await message.reply_text("❌ **Invalid Link!** Only Hanime.tv links are supported.")
         return
 
-    status_msg = await message.reply_text("🔎 **Checking link... Please wait.** ⏳")
+    status_msg = await message.reply_text("🔎 **Processing Link...** ⏳")
 
     try:
-        # Create downloads folder if not exists
         if not os.path.exists("downloads"):
             os.makedirs("downloads")
 
         progress_bar.start_time = time.time()
-        await status_msg.edit_text("📥 **Downloading started...**\nFetching video from servers! 🚀")
+        await status_msg.edit_text("📥 **Downloading started...** 🚀")
         
         loop = asyncio.get_event_loop()
         file_path = await loop.run_in_executor(None, download_video, url)
 
-        # Upload phase
-        await status_msg.edit_text("📤 **Download complete!**\nNow uploading to Telegram... ⚡")
+        await status_msg.edit_text("📤 **Upload started to Telegram...** ⚡️")
         
         await message.reply_video(
             video=file_path,
-            caption=f"✅ **Success!**\n🎥 **File:** `{os.path.basename(file_path)}`",
+            caption=f"✅ **Downloaded:** `{os.path.basename(file_path)}`",
             progress=progress_bar,
-            progress_args=(status_msg, "Uploading to Telegram... 📤")
+            progress_args=(status_msg, "Uploading... 📤")
         )
         
-        # Cleanup storage
         if os.path.exists(file_path):
             os.remove(file_path)
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ **An Error Occurred:**\n`{str(e)}`")
+        await status_msg.edit_text(f"❌ **Error:**\n`{str(e)}`")
 
-print("🔥 Bot is live and running!")
-app.run()
-
+if __name__ == "__main__":
+    print("🔥 Bot is live!")
+    app.run()
+    
