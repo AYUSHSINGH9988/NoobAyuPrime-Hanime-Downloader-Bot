@@ -2,5 +2,6 @@ aiohttp
 pyrogram
 tgcrypto
 yt-dlp
+requests
 
 
