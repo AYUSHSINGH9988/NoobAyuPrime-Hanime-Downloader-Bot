@@ -1,8 +1,7 @@
 import os
 import time
 import asyncio
-import cloudscraper
-import re
+import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import yt_dlp
@@ -37,45 +36,45 @@ async def progress_bar(current, total, message, ud_type):
             pass
         progress_bar.last_update = now
 
-# --- BYPASS & DOWNLOAD LOGIC ---
-def download_hanime(url):
-    scraper = cloudscraper.create_scraper()
-    # Scrape the page to get the video metadata
-    response = scraper.get(url).text
+# --- DOWNLOAD LOGIC ---
+def download_video(url):
+    # Extracting slug from URL (e.g., reika-wa-karei-na-boku-no-joou-2)
+    slug = url.split('/')[-1]
+    api_url = f"https://hanime.tv/api/v8/video?id={slug}"
     
-    # Try to find the m3u8 link or video title using regex
-    # This is a fallback if yt-dlp fails to recognize the URL
+    # Getting direct link from Hanime API
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    r = requests.get(api_url, headers=headers).json()
+    
+    # Fetching the best available stream link
+    # Usually, servers[0] contains the m3u8 stream
+    stream_url = r['videos'][0]['url'] 
+    video_title = r['hentai_video']['name']
+
     ydl_opts = {
         'format': 'best',
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
-        'noplaylist': True,
+        'outtmpl': f'downloads/{video_title}.mp4',
         'quiet': True,
         'no_warnings': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Referer': 'https://hanime.tv/',
-        }
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # We pass the URL through yt-dlp. In some cases, updating the 
-        # internal extractor or using a generic approach works.
-        info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info)
+        ydl.download([stream_url])
+        return f"downloads/{video_title}.mp4"
 
 # --- BOT HANDLERS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("👋 **Bot is Ready!**\nSend a Hanime link to download. 🚀")
+    await message.reply_text("👋 **Bot is Ready!**\nSend a Hanime link to download. 🤖🚀")
 
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def handle_link(client, message: Message):
     url = message.text
     if "hanime.tv" not in url:
-        await message.reply_text("❌ **Error:** Please send a valid Hanime link.")
+        await message.reply_text("❌ **Invalid Link!**")
         return
 
-    status_msg = await message.reply_text("🔎 **Attempting to Bypass & Fetch Video...** ⏳")
+    status_msg = await message.reply_text("🔎 **Fetching direct stream link...** ⏳")
 
     try:
         if not os.path.exists("downloads"):
@@ -84,15 +83,15 @@ async def handle_link(client, message: Message):
         progress_bar.start_time = time.time()
         
         loop = asyncio.get_event_loop()
-        file_path = await loop.run_in_executor(None, download_hanime, url)
+        file_path = await loop.run_in_executor(None, download_video, url)
 
-        await status_msg.edit_text("📤 **Upload started to Telegram...** ⚡️")
+        await status_msg.edit_text("📤 **Download complete! Uploading to Telegram...** ⚡️")
         
         await message.reply_video(
             video=file_path,
-            caption=f"✅ **Downloaded:** `{os.path.basename(file_path)}`",
+            caption=f"✅ **Success!**\n🎥 **File:** `{os.path.basename(file_path)}`",
             progress=progress_bar,
-            progress_args=(status_msg, "Uploading... 📤")
+            progress_args=(status_msg, "Uploading...")
         )
         
         if os.path.exists(file_path):
@@ -100,7 +99,7 @@ async def handle_link(client, message: Message):
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ **Error:**\n`{str(e)}` \n\n_Tip: Try again in a few minutes._")
+        await status_msg.edit_text(f"❌ **Error:**\n`{str(e)}`")
 
 if __name__ == "__main__":
-    app.run() 
+    app.run()
