@@ -1,17 +1,32 @@
 import os
 import time
 import asyncio
-import requests
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 import yt_dlp
+from aiohttp import web
 
 # --- CONFIGURATION ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8354139629:AAFXeLAl1kui4rdlMtKJkONHYlFttBDfh6w")
 
+# Client Setup
 app = Client("hanime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# --- DUMMY WEB SERVER (Koyeb Health Check Fix) ---
+async def web_handler(request):
+    return web.Response(text="Bot is Running on Koyeb!")
+
+async def start_web_server():
+    server = web.Application()
+    server.router.add_get("/", web_handler)
+    runner = web.AppRunner(server)
+    await runner.setup()
+    # Koyeb PORT environment variable use karta hai, default 8000
+    port = int(os.environ.get("PORT", 8000))
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    print(f"🌍 Web server started on port {port}")
 
 # --- PROGRESS BAR ---
 async def progress_bar(current, total, message, ud_type):
@@ -19,7 +34,7 @@ async def progress_bar(current, total, message, ud_type):
     if not hasattr(progress_bar, "last_update"):
         progress_bar.last_update = 0
     
-    if now - progress_bar.last_update > 4:
+    if now - progress_bar.last_update > 5:
         percentage = current * 100 / total
         elapsed_time = now - progress_bar.start_time
         speed = current / elapsed_time if elapsed_time > 0 else 0
@@ -38,34 +53,29 @@ async def progress_bar(current, total, message, ud_type):
 
 # --- DOWNLOAD LOGIC ---
 def download_video(url):
-    # Extracting slug from URL (e.g., reika-wa-karei-na-boku-no-joou-2)
-    slug = url.split('/')[-1]
-    api_url = f"https://hanime.tv/api/v8/video?id={slug}"
-    
-    # Getting direct link from Hanime API
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    r = requests.get(api_url, headers=headers).json()
-    
-    # Fetching the best available stream link
-    # Usually, servers[0] contains the m3u8 stream
-    stream_url = r['videos'][0]['url'] 
-    video_title = r['hentai_video']['name']
-
+    # Standard yt-dlp options with strong headers
     ydl_opts = {
         'format': 'best',
-        'outtmpl': f'downloads/{video_title}.mp4',
+        'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
+        'geo_bypass': True,
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://hanime.tv/',
+        }
     }
-
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([stream_url])
-        return f"downloads/{video_title}.mp4"
+        info = ydl.extract_info(url, download=True)
+        return ydl.prepare_filename(info)
 
-# --- BOT HANDLERS ---
+# --- BOT COMMANDS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("👋 **Bot is Ready!**\nSend a Hanime link to download. 🤖🚀")
+    await message.reply_text("👋 **Bot is Alive!**\nSend a Hanime link. 🤖")
 
 @app.on_message(filters.text & ~filters.command(["start"]))
 async def handle_link(client, message: Message):
@@ -74,22 +84,23 @@ async def handle_link(client, message: Message):
         await message.reply_text("❌ **Invalid Link!**")
         return
 
-    status_msg = await message.reply_text("🔎 **Fetching direct stream link...** ⏳")
+    status_msg = await message.reply_text("🔎 **Processing Link...** ⏳")
 
     try:
         if not os.path.exists("downloads"):
             os.makedirs("downloads")
 
         progress_bar.start_time = time.time()
+        await status_msg.edit_text("📥 **Downloading started...** 🚀")
         
         loop = asyncio.get_event_loop()
         file_path = await loop.run_in_executor(None, download_video, url)
 
-        await status_msg.edit_text("📤 **Download complete! Uploading to Telegram...** ⚡️")
+        await status_msg.edit_text("📤 **Upload started...** ⚡️")
         
         await message.reply_video(
             video=file_path,
-            caption=f"✅ **Success!**\n🎥 **File:** `{os.path.basename(file_path)}`",
+            caption=f"✅ **Downloaded:** `{os.path.basename(file_path)}`",
             progress=progress_bar,
             progress_args=(status_msg, "Uploading...")
         )
@@ -101,5 +112,16 @@ async def handle_link(client, message: Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ **Error:**\n`{str(e)}`")
 
+# --- MAIN EXECUTION ---
+async def main():
+    # Pehle web server start karenge taaki Koyeb khush rahe
+    await start_web_server()
+    # Phir bot start karenge
+    await app.start()
+    print("🔥 Bot and Web Server are running!")
+    await idle()
+    await app.stop()
+
 if __name__ == "__main__":
-    app.run()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
