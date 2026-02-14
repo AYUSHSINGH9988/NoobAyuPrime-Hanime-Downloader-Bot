@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import requests
+import json
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import yt_dlp
@@ -10,17 +11,18 @@ from aiohttp import web
 # --- CONFIGURATION ---
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8354139629:AAFXeLAl1kui4rdlMtKJkONHYlFttBDfh6w")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-# Yahan wo Session Token aayega jo aapne browser se nikala
-# Koyeb ke Environment Variables mein HANIME_SESSION naam se add karna
-HANIME_SESSION = os.environ.get("HANIME_SESSION", "")
+# --- SESSION TOKEN CLEANER (Automatic Fix) ---
+# Agar token mein '(-(0)-)' jaisa kuch hua, toh ye use hata dega
+raw_session = os.environ.get("HANIME_SESSION", "")
+HANIME_SESSION = raw_session.split('(')[0].strip()
 
 app = Client("hanime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- WEB SERVER ---
+# --- WEB SERVER (To Keep Bot Alive on Koyeb) ---
 async def web_handler(request):
-    return web.Response(text="Bot is Alive!")
+    return web.Response(text="Bot is Alive and Running!")
 
 async def start_web_server():
     server = web.Application()
@@ -29,6 +31,7 @@ async def start_web_server():
     await runner.setup()
     port = int(os.environ.get("PORT", 8000))
     await web.TCPSite(runner, "0.0.0.0", port).start()
+    print("🌍 Web Server Started.")
 
 # --- PROGRESS BAR ---
 async def progress_bar(current, total, message, ud_type):
@@ -48,102 +51,146 @@ async def progress_bar(current, total, message, ud_type):
             pass
         progress_bar.last_update = now
 
-# --- PREMIUM DOWNLOADER ---
+# --- ULTIMATE DOWNLOADER LOGIC ---
 def download_video(url):
-    slug = url.split('/hentai/')[-1].split('?')[0]
-    api_url = f"https://hanime.tv/api/v8/video?id={slug}"
+    # 1. URL se ID (Slug) nikalo
+    try:
+        slug = url.split('/hentai/')[-1].split('?')[0]
+    except:
+        raise Exception("Invalid URL. '/hentai/' nahi mila.")
+
+    print(f"🔍 Analyzing: {slug}")
     
-    # Headers mein Session Token add kar rahe hain
+    # 2. API Headers (Fake Android Device)
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Session-Token': HANIME_SESSION  # Ye line magic karegi
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36',
+        'Cookie': f'htv3session={HANIME_SESSION}',
+        'X-Directive': 'api',
+        'Accept': 'application/json',
     }
     
-    print(f"🔍 Fetching API (Logged-In Mode)...")
+    # 3. API Call
+    api_url = f"https://hanime.tv/api/v8/video?id={slug}"
     try:
-        r = requests.get(api_url, headers=headers, timeout=10)
+        r = requests.get(api_url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            raise Exception(f"API Error Code: {r.status_code}")
         data = r.json()
     except Exception as e:
-        raise Exception(f"API Error: {str(e)}")
+        raise Exception(f"API Connection Failed: {str(e)}")
 
+    # 4. Name Cleaning
     video_title = data['hentai_video']['name']
-    video_title = "".join([c for c in video_title if c.isalnum() or c==' ']).strip()
-    
-    # Ab hume Premium Servers milenge
-    valid_streams = []
-    servers = data.get('videos_manifest', {}).get('servers', [])
-    
-    print(f"✅ Found {len(servers)} servers from API.")
+    safe_title = "".join([c for c in video_title if c.isalnum() or c==' ']).strip()
+    output_file = f'downloads/{safe_title}.mp4'
 
-    for server in servers:
+    # 5. Extract ALL Possible Streams
+    stream_urls = []
+    
+    # Priority 1: Manifest Servers (Highest Quality)
+    manifest = data.get('videos_manifest', {})
+    for server in manifest.get('servers', []):
         for stream in server.get('streams', []):
-            link = stream['url']
-            # Ab hume filter karne ki zarurat nahi, kyunki premium links usually ache hote hain
-            if link and link not in valid_streams:
-                valid_streams.append(link)
+            if stream.get('url'):
+                stream_urls.append(stream['url'])
 
-    if not valid_streams:
-        raise Exception("Koi bhi video link nahi mila (Check Session Token).")
+    # Priority 2: Direct Video Object (Fallback)
+    if not stream_urls:
+        for vid in data.get('videos', []):
+            if vid.get('url'):
+                stream_urls.append(vid['url'])
+                
+    if not stream_urls:
+        raise Exception("Login ke bawajood koi video link nahi mila. Token Expired?")
 
-    output_file = f'downloads/{video_title}.mp4'
-    
-    for i, stream_url in enumerate(valid_streams):
-        print(f"🚀 Trying Server {i+1}...")
+    print(f"🎯 Found {len(stream_urls)} servers. Starting attack...")
+
+    # 6. Try Each Stream Until One Works
+    for i, link in enumerate(stream_urls):
+        print(f"🔄 Attempt {i+1}/{len(stream_urls)}...")
         
+        # Dead Server Skip
+        if "streamable.cloud" in link:
+            print("⚠️ Skipping known bad server (DNS Issue).")
+            # Hum isko sirf tab try karenge agar baaki sab fail ho jayein
+            # (Lekin abhi ke liye skip karte hain time bachane ke liye)
+            continue
+
         ydl_opts = {
             'format': 'best',
             'outtmpl': output_file,
             'quiet': True,
-            'no_warnings': True,
             'http_headers': headers,
-            'socket_timeout': 15,
+            'nocheckcertificate': True, # SSL Errors Ignore
             'ignoreerrors': True,
+            'socket_timeout': 10,
+            'retries': 5,
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([stream_url])
+                ydl.download([link])
             
-            if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
-                print(f"✅ Success on Server {i+1}")
+            # Check if download actually happened
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 1024:
+                print(f"✅ Success on Server {i+1}!")
                 return output_file
         except Exception as e:
-            print(f"❌ Server {i+1} Failed. Trying next...")
-            continue 
+            print(f"❌ Server {i+1} Failed: {e}")
+            continue
 
-    raise Exception("Sabhi Premium Servers bhi fail ho gaye.")
+    # 7. Last Resort (Try 'Bad' Servers if clean ones failed)
+    print("⚠️ Clean servers failed. Trying risky servers...")
+    for link in stream_urls:
+        if "streamable.cloud" in link:
+             # Try generic download
+             try:
+                ydl_opts = {'outtmpl': output_file, 'nocheckcertificate': True, 'ignoreerrors': True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([link])
+                if os.path.exists(output_file): return output_file
+             except: pass
+
+    raise Exception("All mirrors failed. Koyeb IP is fully blocked.")
 
 # --- HANDLERS ---
 @app.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text("👋 Premium Bot Ready!")
+    await message.reply_text("👋 **Final Hanime Bot**\nLogged in & Ready to Bypass! 🛡️")
 
 @app.on_message(filters.text)
 async def handle_link(client, message: Message):
-    if "hanime.tv" not in message.text: return
+    url = message.text
+    if "hanime.tv" not in url:
+        return
 
-    status_msg = await message.reply_text("🔐 **Authenticating & Fetching...**")
+    status = await message.reply_text("🕵️ **Hacking Mainframe... (Logging in)**")
 
     try:
-        if not os.path.exists("downloads"): os.makedirs("downloads")
+        if not os.path.exists("downloads"):
+            os.makedirs("downloads")
+
         progress_bar.start_time = time.time()
         
         loop = asyncio.get_event_loop()
-        file_path = await loop.run_in_executor(None, download_video, message.text)
+        file_path = await loop.run_in_executor(None, download_video, url)
 
-        await status_msg.edit_text("📤 **Uploading Premium Video...**")
+        await status.edit_text("📤 **Got it! Uploading...**")
+        
         await message.reply_video(
             video=file_path,
-            caption=f"🎥 `{os.path.basename(file_path)}`",
+            caption=f"🎥 **{os.path.basename(file_path)}**\n✅ *Premium Download*",
             progress=progress_bar,
-            progress_args=(status_msg, "Uploading")
+            progress_args=(status, "Uploading")
         )
+        
         os.remove(file_path)
-        await status_msg.delete()
+        await status.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"❌ **Error:** {str(e)}")
+        await status.edit_text(f"💀 **Fatal Error:**\n`{str(e)}`")
 
+# --- MAIN RUNNER ---
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(start_web_server())
