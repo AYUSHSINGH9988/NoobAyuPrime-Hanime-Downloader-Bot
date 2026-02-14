@@ -13,8 +13,7 @@ API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
-# --- SESSION TOKEN CLEANER (Automatic Fix) ---
-# Agar token mein '(-(0)-)' jaisa kuch hua, toh ye use hata dega
+# --- SESSION TOKEN CLEANER ---
 raw_session = os.environ.get("HANIME_SESSION", "")
 HANIME_SESSION = raw_session.split('(')[0].strip()
 
@@ -53,7 +52,6 @@ async def progress_bar(current, total, message, ud_type):
 
 # --- ULTIMATE DOWNLOADER LOGIC ---
 def download_video(url):
-    # 1. URL se ID (Slug) nikalo
     try:
         slug = url.split('/hentai/')[-1].split('?')[0]
     except:
