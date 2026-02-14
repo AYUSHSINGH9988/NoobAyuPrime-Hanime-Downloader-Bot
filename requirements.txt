@@ -2,5 +2,5 @@ aiohttp
 pyrogram
 tgcrypto
 yt-dlp
-cloudscraper
+
 
