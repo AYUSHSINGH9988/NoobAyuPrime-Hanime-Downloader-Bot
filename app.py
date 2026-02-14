@@ -14,9 +14,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8354139629:AAFXeLAl1kui4rdlMtKJkONHYlFt
 
 app = Client("hanime_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- WEB SERVER (Koyeb Alive Fix) ---
+# --- WEB SERVER (Koyeb Fix) ---
 async def web_handler(request):
-    return web.Response(text="Bot is Alive and Running!")
+    return web.Response(text="Bot is Alive!")
 
 async def start_web_server():
     server = web.Application()
@@ -44,44 +44,31 @@ async def progress_bar(current, total, message, ud_type):
             pass
         progress_bar.last_update = now
 
-# --- SMART DOWNLOADER (Server Loop) ---
+# --- IMPROVED DOWNLOADER ---
 def download_video(url):
-    try:
-        slug = url.split('/hentai/')[-1].split('?')[0]
-    except:
-        raise Exception("Invalid URL. Make sure it contains '/hentai/'.")
-
-    print(f"Fetching API for: {slug}")
+    slug = url.split('/hentai/')[-1].split('?')[0]
     api_url = f"https://hanime.tv/api/v8/video?id={slug}"
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    try:
-        r = requests.get(api_url, headers=headers, timeout=10)
-        data = r.json()
-    except:
-        raise Exception("Could not connect to Hanime API.")
+    r = requests.get(api_url, headers=headers, timeout=10)
+    data = r.json()
 
     video_title = data['hentai_video']['name']
     video_title = "".join([c for c in video_title if c.isalnum() or c==' ']).strip()
     
-    # --- MAGIC: Collect ALL Servers ---
-    potential_streams = []
+    valid_streams = []
     servers = data.get('videos_manifest', {}).get('servers', [])
     
     for server in servers:
         for stream in server.get('streams', []):
-            if stream['url'] and stream['url'] not in potential_streams:
-                potential_streams.append(stream['url'])
+            if stream['url'] and stream['url'] not in valid_streams:
+                valid_streams.append(stream['url'])
 
-    if not potential_streams:
-        raise Exception("No video streams found in API.")
-
-    # --- Loop through servers until one works ---
     output_file = f'downloads/{video_title}.mp4'
-    last_error = ""
-
-    for i, stream_url in enumerate(potential_streams):
-        print(f"Trying Server {i+1}...")
+    
+    # Servers ko try karne ka loop
+    for i, stream_url in enumerate(valid_streams):
+        print(f"🔄 Trying Mirror {i+1}...")
         
         ydl_opts = {
             'format': 'best',
@@ -89,25 +76,26 @@ def download_video(url):
             'quiet': True,
             'no_warnings': True,
             'http_headers': headers,
-            # DNS fix options
+            # DNS/Network Fixes
             'socket_timeout': 10,
-            'retries': 3,
+            'retries': 2,
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,
+            'ignoreerrors': True, # Taaki error aane par bot crash na ho
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([stream_url])
-            
-            # Agar file ban gayi, toh loop break karo
-            if os.path.exists(output_file):
-                print(f"Success on Server {i+1}")
+                # Is function se hum check karte hain ki kya download start hua
+                result = ydl.download([stream_url])
+                
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 1000:
                 return output_file
         except Exception as e:
-            print(f"Server {i+1} failed: {e}")
-            last_error = str(e)
-            continue # Try next server
+            print(f"❌ Mirror {i+1} failed. Moving to next...")
+            continue 
 
-    raise Exception(f"All servers failed. Last error: {last_error}")
+    raise Exception("All video mirrors failed to resolve on Koyeb servers.")
 
 # --- HANDLERS ---
 @app.on_message(filters.command("start"))
@@ -118,7 +106,7 @@ async def start(client, message):
 async def handle_link(client, message: Message):
     if "hanime.tv" not in message.text: return
 
-    status_msg = await message.reply_text("🔄 **Finding working server...**")
+    status_msg = await message.reply_text("🔄 **Checking all available mirrors...**")
 
     try:
         if not os.path.exists("downloads"): os.makedirs("downloads")
